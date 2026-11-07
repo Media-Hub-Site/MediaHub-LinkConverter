@@ -1,0 +1,54 @@
+﻿name: Build and Release MediaHub-LinkConverter
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+
+      - name: Build Executable with PyInstaller
+        run: pyinstaller main.spec
+
+      - name: Compress Build to ZIP
+        run: |
+          Compress-Archive -Path "dist\MediaHub-LinkConverter\*" -DestinationPath "MediaHub-LinkConverter.zip" -Force
+
+      - name: Generate Release Tag Name
+        id: tag_name
+        run: |
+          if ("${{ github.ref }}" -match "refs/tags/") {
+            echo "TAG=${{ github.ref_name }}" >> $env:GITHUB_OUTPUT
+          } else {
+            $date = Get-Date -Format "yyyyMMdd-HHmm"
+            echo "TAG=v$date" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_name.outputs.TAG }}
+          name: MediaHub-LinkConverter ${{ steps.tag_name.outputs.TAG }}
+          files: |
+            MediaHub-LinkConverter.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
