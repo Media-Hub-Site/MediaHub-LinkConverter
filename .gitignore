@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -13,7 +13,6 @@ build/
 .eggs/
 
 # PyInstaller
-*.spec
 dist/
 build/
 
