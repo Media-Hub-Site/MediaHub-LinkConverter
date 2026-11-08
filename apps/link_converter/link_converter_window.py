@@ -9,7 +9,7 @@ from PyQt6.QtGui import QPixmap
 from PyQt6.QtCore import Qt
 
 from apps.link_converter.platform_detector import detect_platform
-from apps.media_converter.ui.ui_theme import (
+from apps.link_converter.ui_theme import (
     get_app_colors, get_soft_button_style,
     apply_window_theme, make_card_container,
 )
