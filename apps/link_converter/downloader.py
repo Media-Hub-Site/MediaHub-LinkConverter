@@ -1,12 +1,82 @@
 """
 Módulo de descarga y extracción de metadatos de enlaces y playlists.
 Soporta yt-dlp con extracción previa de metadatos y descargas concurrentes.
+Localización y preparación automática de FFmpeg / FFprobe para post-procesado.
 """
 
 import os
+import sys
+import shutil
 import urllib.request
 import urllib.error
 from PyQt6.QtCore import QThread, pyqtSignal
+
+
+def _get_ffmpeg_binary_path() -> str | None:
+    """
+    Localiza o prepara un ejecutable de ffmpeg / ffprobe funcional para yt-dlp.
+    yt-dlp requiere que en la carpeta o binario existan 'ffmpeg.exe' y 'ffprobe.exe'.
+    """
+    # 1. Comprobar si ffmpeg ya está en el PATH del sistema
+    for name in ("ffmpeg.exe", "ffmpeg"):
+        p = shutil.which(name)
+        if p and os.path.isfile(p):
+            return os.path.dirname(p)
+
+    # 2. Carpeta global compartida de Media Hub (~/.mediahub/bin)
+    user_home = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+    hub_bin = os.path.join(user_home, ".mediahub", "bin")
+    hub_ffmpeg = os.path.join(hub_bin, "ffmpeg.exe")
+    hub_ffprobe = os.path.join(hub_bin, "ffprobe.exe")
+    if os.path.isfile(hub_ffmpeg) and os.path.isfile(hub_ffprobe):
+        return hub_bin
+
+    # 3. Intentar extraer/obtener desde imageio_ffmpeg
+    try:
+        import imageio_ffmpeg
+        orig_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if orig_exe and os.path.isfile(orig_exe):
+            bin_dir = os.path.dirname(orig_exe)
+            ff_exe = os.path.join(bin_dir, "ffmpeg.exe")
+            fp_exe = os.path.join(bin_dir, "ffprobe.exe")
+
+            # Si se llama con sufijo (ej: ffmpeg-win-x86_64-v7.1.exe), creamos copias/enlaces
+            if not os.path.isfile(ff_exe):
+                try:
+                    shutil.copyfile(orig_exe, ff_exe)
+                except Exception:
+                    pass
+            if not os.path.isfile(fp_exe):
+                try:
+                    shutil.copyfile(orig_exe, fp_exe)
+                except Exception:
+                    pass
+
+            if os.path.isfile(ff_exe):
+                # También aseguramos tenerlo en ~/.mediahub/bin para futuras ejecuciones
+                try:
+                    os.makedirs(hub_bin, exist_ok=True)
+                    if not os.path.isfile(hub_ffmpeg):
+                        shutil.copyfile(orig_exe, hub_ffmpeg)
+                    if not os.path.isfile(hub_ffprobe):
+                        shutil.copyfile(orig_exe, hub_ffprobe)
+                except Exception:
+                    pass
+                return bin_dir
+    except Exception:
+        pass
+
+    # 4. Comprobar ~/.mediahub/bin aunque solo exista ffmpeg.exe
+    if os.path.isfile(hub_ffmpeg):
+        if not os.path.isfile(hub_ffprobe):
+            try:
+                shutil.copyfile(hub_ffmpeg, hub_ffprobe)
+            except Exception:
+                pass
+        return hub_bin
+
+    return None
+
 
 def _parse_error(e: Exception) -> str:
     """Convierte errores de yt-dlp en mensajes legibles para el usuario."""
@@ -71,6 +141,10 @@ class MetadataWorker(QThread):
                 "extract_flat": "in_playlist",  # Rápido para playlists sin entrar a cada video
                 "nocheckcertificate": True,
             }
+            ff_loc = _get_ffmpeg_binary_path()
+            if ff_loc:
+                ydl_opts["ffmpeg_location"] = ff_loc
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(self.url, download=False)
                 if not info:
@@ -100,23 +174,27 @@ class MetadataWorker(QThread):
                             "uploader": entry.get("uploader") or playlist_title,
                             "duration": dur_str,
                             "thumbnail_url": entry.get("thumbnail") or "",
-                            "is_playlist": True,
+                            "is_playlist": False,
                             "default_type": "video",
                         })
+
+                    if not items:
+                        self.error.emit("La lista de reproducción está vacía o no tiene videos disponibles.")
+                        return
+
                     self.finished_info.emit(items)
                     return
 
-                # Si es un video / audio individual
+                # Si es un solo video / contenido
                 dur_s = info.get("duration") or 0
                 dur_str = f"{int(dur_s // 60)}:{int(dur_s % 60):02d}" if dur_s else ""
-                thumbnail = info.get("thumbnail") or ""
 
                 item = {
                     "url": info.get("webpage_url") or self.url,
-                    "title": info.get("title", "Sin título"),
-                    "uploader": info.get("uploader", "Desconocido"),
+                    "title": info.get("title", "Descarga Multimedia"),
+                    "uploader": info.get("uploader") or info.get("channel") or "Desconocido",
                     "duration": dur_str,
-                    "thumbnail_url": thumbnail,
+                    "thumbnail_url": info.get("thumbnail") or "",
                     "is_playlist": False,
                     "default_type": "video",
                 }
@@ -128,23 +206,23 @@ class MetadataWorker(QThread):
 
 class DownloadWorker(QThread):
     """
-    Hilo de descarga por tarjeta. Emite señales de progreso, fin y error.
+    Descarga individual de un enlace hacia la carpeta configurada.
     """
-    progress = pyqtSignal(int, str)      # (porcentaje 0-100, texto_estado)
-    finished = pyqtSignal(str, str)      # (título, ruta_guardada)
-    error = pyqtSignal(str)              # mensaje de error
+    progress = pyqtSignal(int, str)
+    finished = pyqtSignal(str, str)  # (title, saved_path)
+    error = pyqtSignal(str)
 
-    def __init__(self, url: str, media_type: str, fmt: str,
-                 quality: str, output_dir: str, parent=None):
+    def __init__(self, url: str, output_dir: str, media_type: str = "video",
+                 quality: str = "best", fmt: str = "mp4", parent=None):
         super().__init__(parent)
         self.url = url
-        self.media_type = media_type   # "video" | "audio" | "image"
-        self.fmt = fmt
-        self.quality = quality
         self.output_dir = output_dir
-        self._last_percent = -1
+        self.media_type = media_type.lower()  # "video", "audio", "image"
+        self.quality = quality.lower()        # "best", "1080", "720", "480", "360"
+        self.fmt = fmt.lower()                # "mp4", "mkv", "mp3", "wav", "m4a", etc.
         self._is_cancelled = False
-        self._downloaded_title = "archivo"
+        self._last_percent = -1
+        self._downloaded_title = ""
         self._final_path = ""
 
     def cancel(self):
@@ -223,14 +301,7 @@ class DownloadWorker(QThread):
             elif d.get("status") == "finished":
                 self.progress.emit(98, "Finalizando archivo...")
 
-        ffmpeg_location = None
-        try:
-            import imageio_ffmpeg
-            exe = imageio_ffmpeg.get_ffmpeg_exe()
-            if os.path.isfile(exe):
-                ffmpeg_location = os.path.dirname(exe)
-        except Exception:
-            pass
+        ffmpeg_location = _get_ffmpeg_binary_path()
 
         ydl_opts = {
             "outtmpl": output_template,
