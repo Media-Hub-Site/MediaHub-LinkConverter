@@ -1,553 +1,649 @@
 import os
+import sys
 import subprocess
+import urllib.request
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QComboBox, QProgressBar, QFileDialog,
-    QMessageBox, QApplication, QFrame
+    QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
+    QLineEdit, QFileDialog, QProgressBar, QMessageBox, QFrame, QScrollArea,
+    QComboBox, QGridLayout
 )
-from PyQt6.QtGui import QPixmap
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize, QTimer
+from PyQt6.QtGui import QIcon, QPixmap, QImage
 
+from apps.link_converter.ui_theme import get_app_colors, apply_window_theme
 from apps.link_converter.platform_detector import detect_platform
-from apps.link_converter.ui_theme import (
-    get_app_colors, get_soft_button_style,
-    apply_window_theme, make_card_container,
-)
-
-# ── Estilos fijos del Link Converter (colores propios tipo "terminal") ────────
-URL_INPUT_STYLE = """
-    QLineEdit {
-        background-color: #1e1e2a;
-        color: #ffffff;
-        border: 2px solid #3a3a52;
-        border-radius: 10px;
-        padding: 10px 14px;
-        font-size: 11pt;
-        font-family: 'Segoe UI', sans-serif;
-    }
-    QLineEdit:focus {
-        border-color: #6c63ff;
-    }
-    QLineEdit::placeholder {
-        color: #666;
-    }
-"""
-
-TYPE_BTN_ACTIVE = """
-    QPushButton {
-        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-            from:#6c63ff, to:#a78bfa);
-        color: white;
-        border-radius: 8px;
-        padding: 10px 20px;
-        font-size: 11pt;
-        font-weight: bold;
-        border: none;
-    }
-"""
-
-# Imagen activa: degradado verde-azulado
-TYPE_BTN_ACTIVE_IMG = """
-    QPushButton {
-        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-            from:#11998e, to:#38ef7d);
-        color: white;
-        border-radius: 8px;
-        padding: 10px 20px;
-        font-size: 11pt;
-        font-weight: bold;
-        border: none;
-    }
-"""
-
-TYPE_BTN_INACTIVE_TMPL = """    QPushButton {{
-        background-color: #2b2b3b;
-        color: {muted};
-        border-radius: 8px;
-        padding: 10px 20px;
-        font-size: 11pt;
-        border: 2px solid #3a3a52;
-    }}
-    QPushButton:hover {{
-        background-color: #35354a;
-        color: white;
-    }}
-"""
-
-TYPE_BTN_DISABLED = """
-    QPushButton {
-        background-color: #1e1e2a;
-        color: #444;
-        border-radius: 8px;
-        padding: 10px 20px;
-        font-size: 11pt;
-        border: 2px solid #2a2a3a;
-    }
-"""
-
-COMBO_STYLE_LC = """
-    QComboBox {
-        background-color: #1e1e2a;
-        color: white;
-        border: 2px solid #3a3a52;
-        border-radius: 8px;
-        padding: 8px 12px;
-        font-size: 10pt;
-        min-width: 120px;
-    }
-    QComboBox:hover { border-color: #6c63ff; }
-    QComboBox::drop-down {
-        border: none;
-        padding-right: 10px;
-    }
-    QComboBox QAbstractItemView {
-        background-color: #1e1e2a;
-        color: white;
-        selection-background-color: #6c63ff;
-        border: 1px solid #3a3a52;
-        border-radius: 6px;
-    }
-"""
-
-PROGRESS_STYLE = """
-    QProgressBar {
-        background-color: #1e1e2a;
-        border: 2px solid #3a3a52;
-        border-radius: 8px;
-        height: 18px;
-        text-align: center;
-        color: white;
-        font-size: 9pt;
-    }
-    QProgressBar::chunk {
-        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-            from:#6c63ff, to:#a78bfa);
-        border-radius: 6px;
-    }
-"""
-
-DOWNLOAD_BTN_ACTIVE = """
-    QPushButton {
-        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-            from:#6c63ff, to:#a78bfa);
-        color: white;
-        border-radius: 10px;
-        padding: 13px;
-        font-size: 12pt;
-        font-weight: bold;
-        border: none;
-    }
-    QPushButton:hover {
-        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-            from:#7c73ff, to:#b79bff);
-    }
-    QPushButton:pressed {
-        background: #5a52d5;
-    }
-"""
-
-DOWNLOAD_BTN_DISABLED = """
-    QPushButton {
-        background-color: #1e1e2a;
-        color: #444;
-        border-radius: 10px;
-        padding: 13px;
-        font-size: 12pt;
-        font-weight: bold;
-        border: 2px solid #2a2a3a;
-    }
-"""
-
-# Formato por tipo de contenido
-FORMATS_VIDEO  = ["mp4", "mkv", "webm", "avi"]
-FORMATS_AUDIO  = ["mp3", "m4a", "flac", "ogg", "wav"]
-FORMATS_IMAGE  = ["jpg", "png", "webp", "gif", "bmp"]
+from apps.link_converter.downloader import MetadataWorker, DownloadWorker
 
 
-def get_icon_path(icon_file: str) -> str:
-    import sys
-    if getattr(sys, 'frozen', False):
-        base = sys._MEIPASS
-    else:
-        base = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    return os.path.join(base, "assets", "apps", "link_converter", icon_file)
+class DownloadCard(QFrame):
+    """Tarjeta individual interactiva para cada video, audio o imagen en la cola."""
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Ventana principal
-# ─────────────────────────────────────────────────────────────────────────────
-class LinkConverterWindow(QWidget):
-    def __init__(self):
+    def __init__(self, item_data: dict, output_dir: str, parent_manager):
         super().__init__()
-        self.setWindowTitle("Link Converter")
-        self.setGeometry(120, 120, 520, 660)
-        apply_window_theme(self)
-        self._colors = get_app_colors()
-
-        self._worker           = None
-        self._media_type       = "video"          # "video" | "audio" | "image"
-        self._current_platform = None
-        self._allowed_types    = ["video", "audio", "image"]  # actualizado por detector
+        self.item_data = item_data
+        self.output_dir = output_dir
+        self.parent_manager = parent_manager
+        self._colors = parent_manager._colors
+        self.worker = None
+        self.saved_path = None
+        self.is_downloading = False
+        self.is_finished = False
 
         self.init_ui()
 
-    # ── UI ────────────────────────────────────────────────────────────────────
     def init_ui(self):
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(26, 24, 26, 24)
-        card, layout = make_card_container()
+        self.setStyleSheet(f"""
+            QFrame#downloadCard {{
+                background-color: {self._colors['card']};
+                border: 1px solid {self._colors['border']};
+                border-radius: 14px;
+            }}
+        """)
+        self.setObjectName("downloadCard")
+        self.setFixedHeight(125)
 
-        # ── Barra superior ──────────────────────────────────────────────────
-        top = QHBoxLayout()
-        back_btn = QPushButton("← Volver")
-        back_btn.setFixedWidth(90)
-        back_btn.clicked.connect(self.go_back)
-        back_btn.setStyleSheet(get_soft_button_style())
-        top.addWidget(back_btn)
-        top.addStretch()
-        layout.addLayout(top)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(14)
 
-        # ── Título ──────────────────────────────────────────────────────────
-        title = QLabel("Link Converter")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet(
-            f"color: {self._colors['text_main']}; font-size: 16pt; font-weight: 700;")
-        layout.addWidget(title)
+        # 1. Miniatura / Icono de plataforma
+        self.thumb_label = QLabel()
+        self.thumb_label.setFixedSize(110, 75)
+        self.thumb_label.setStyleSheet(f"background-color: {self._colors['bg']}; border-radius: 8px;")
+        self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._load_thumbnail(self.item_data.get("thumbnail_url"))
+        layout.addWidget(self.thumb_label)
 
-        self.subtitle = QLabel("Descarga video, audio o imagen desde redes sociales")
-        self.subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.subtitle.setStyleSheet(
-            f"color: {self._colors['text_muted']}; font-size: 9pt;")
-        layout.addWidget(self.subtitle)
+        # 2. Información del contenido
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(4)
 
-        # ── Logo de plataforma ──────────────────────────────────────────────
-        self.platform_logo = QLabel()
-        self.platform_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.platform_logo.setFixedHeight(90)
-        self._clear_logo()
-        layout.addWidget(self.platform_logo)
+        self.title_label = QLabel(self.item_data.get("title", "Cargando enlace..."))
+        self.title_label.setStyleSheet(f"color: {self._colors['text_main']}; font-weight: 700; font-size: 11pt;")
+        self.title_label.setWordWrap(False)
+        info_layout.addWidget(self.title_label)
 
-        self.platform_name_label = QLabel("")
-        self.platform_name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.platform_name_label.setStyleSheet(
-            f"color: {self._colors['text_muted']}; font-size: 9pt;")
-        layout.addWidget(self.platform_name_label)
+        uploader = self.item_data.get("uploader", "")
+        duration = self.item_data.get("duration", "")
+        meta_text = f"👤 {uploader}   •   ⏱️ {duration}" if duration else f"👤 {uploader}"
+        self.meta_label = QLabel(meta_text)
+        self.meta_label.setStyleSheet(f"color: {self._colors['text_muted']}; font-size: 8.5pt;")
+        info_layout.addWidget(self.meta_label)
 
-        # ── Badge de tipo detectado ─────────────────────────────────────────
-        self.detected_badge = QLabel("")
-        self.detected_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.detected_badge.setVisible(False)
-        layout.addWidget(self.detected_badge)
+        # Barra de progreso individual
+        self.prog_bar = QProgressBar()
+        self.prog_bar.setFixedHeight(8)
+        self.prog_bar.setTextVisible(False)
+        self.prog_bar.setValue(0)
+        self.prog_bar.setVisible(False)
+        self.prog_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background: {self._colors['bg']};
+                border-radius: 4px;
+            }}
+            QProgressBar::chunk {{
+                background: {self._colors['accent']};
+                border-radius: 4px;
+            }}
+        """)
+        info_layout.addWidget(self.prog_bar)
 
-        # ── Campo URL ───────────────────────────────────────────────────────
-        self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText(
-            "Pega aquí el enlace (YouTube, TikTok, Instagram, imagen...)")
-        self.url_input.setStyleSheet(URL_INPUT_STYLE)
-        self.url_input.textChanged.connect(self._on_url_changed)
-        layout.addWidget(self.url_input)
+        self.status_lbl = QLabel("")
+        self.status_lbl.setStyleSheet(f"color: {self._colors['text_muted']}; font-size: 8.5pt; font-weight: 600;")
+        self.status_lbl.setVisible(False)
+        info_layout.addWidget(self.status_lbl)
 
-        # ── Separador ───────────────────────────────────────────────────────
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #3a3a52;")
-        layout.addWidget(sep)
+        layout.addLayout(info_layout, stretch=1)
 
-        # ── Tipo de descarga ─────────────────────────────────────────────────
-        type_label = QLabel("Tipo de descarga:")
-        type_label.setStyleSheet(
-            f"color: {self._colors['text_muted']}; font-size: 9pt;")
-        layout.addWidget(type_label)
+        # 3. Controles por tarjeta (Formato, Calidad y Acción)
+        controls_layout = QVBoxLayout()
+        controls_layout.setSpacing(6)
+        controls_layout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        type_row = QHBoxLayout()
+        top_controls = QHBoxLayout()
+        top_controls.setSpacing(6)
 
-        self.btn_video = QPushButton("🎬  Video")
-        self.btn_video.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_video.clicked.connect(lambda: self._set_type("video"))
+        # Combo Tipo / Formato
+        self.type_combo = QComboBox()
+        self.type_combo.setStyleSheet(self._combo_style())
+        if self.item_data.get("default_type") == "image":
+            self.type_combo.addItems(["JPG", "PNG", "WEBP"])
+        else:
+            self.type_combo.addItems(["🎬 MP4", "🎬 MKV", "🎵 MP3", "🎵 M4A", "🎵 WAV"])
+        self.type_combo.currentIndexChanged.connect(self._on_type_changed)
+        top_controls.addWidget(self.type_combo)
 
-        self.btn_audio = QPushButton("🎵  Audio")
-        self.btn_audio.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_audio.clicked.connect(lambda: self._set_type("audio"))
-
-        self.btn_image = QPushButton("🖼  Imagen")
-        self.btn_image.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_image.clicked.connect(lambda: self._set_type("image"))
-
-        type_row.addWidget(self.btn_video)
-        type_row.addWidget(self.btn_audio)
-        type_row.addWidget(self.btn_image)
-        layout.addLayout(type_row)
-        self._update_type_buttons()
-
-        # ── Formato + Calidad ────────────────────────────────────────────────
-        options_row = QHBoxLayout()
-
-        fmt_col = QVBoxLayout()
-        fmt_lbl = QLabel("Formato:")
-        fmt_lbl.setStyleSheet(f"color: {self._colors['text_muted']}; font-size: 9pt;")
-        self.fmt_combo = QComboBox()
-        self.fmt_combo.setStyleSheet(COMBO_STYLE_LC)
-        self._populate_format_combo()
-        fmt_col.addWidget(fmt_lbl)
-        fmt_col.addWidget(self.fmt_combo)
-        options_row.addLayout(fmt_col)
-
-        options_row.addSpacing(20)
-
-        qual_col = QVBoxLayout()
-        qual_lbl = QLabel("Calidad (video):")
-        qual_lbl.setStyleSheet(f"color: {self._colors['text_muted']}; font-size: 9pt;")
-        self.quality_lbl = qual_lbl
+        # Combo Calidad (para video)
         self.qual_combo = QComboBox()
-        self.qual_combo.setStyleSheet(COMBO_STYLE_LC)
-        self.qual_combo.addItems(["Mejor disponible", "1080p", "720p", "480p", "360p"])
-        qual_col.addWidget(qual_lbl)
-        qual_col.addWidget(self.qual_combo)
-        options_row.addLayout(qual_col)
+        self.qual_combo.setStyleSheet(self._combo_style())
+        self.qual_combo.addItems(["Máxima", "1080p", "720p", "480p"])
+        top_controls.addWidget(self.qual_combo)
 
-        layout.addLayout(options_row)
+        # Botón Quitar Tarjeta
+        self.btn_del = QPushButton("✕")
+        self.btn_del.setFixedSize(28, 28)
+        self.btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_del.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {self._colors['text_muted']};
+                border: 1px solid {self._colors['border']};
+                border-radius: 6px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: rgba(235, 87, 87, 0.2);
+                color: #FF5A5A;
+                border-color: #FF5A5A;
+            }}
+        """)
+        self.btn_del.clicked.connect(self.remove_card)
+        top_controls.addWidget(self.btn_del)
 
-        # ── Progreso ─────────────────────────────────────────────────────────
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setStyleSheet(PROGRESS_STYLE)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
+        controls_layout.addLayout(top_controls)
 
-        self.status_label = QLabel("")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet(
-            f"color: {self._colors['text_muted']}; font-size: 9pt;")
-        self.status_label.setVisible(False)
-        layout.addWidget(self.status_label)
+        # Botón Acción de Descarga / Abrir
+        self.btn_action = QPushButton("⬇️ Descargar")
+        self.btn_action.setFixedHeight(34)
+        self.btn_action.setFixedWidth(140)
+        self.btn_action.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_action.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self._colors['accent']};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+                font-weight: 700;
+                font-size: 9.5pt;
+            }}
+            QPushButton:hover {{
+                background-color: {self._colors['accent_hover']};
+            }}
+            QPushButton:disabled {{
+                background-color: {self._colors['border']};
+                color: {self._colors['text_muted']};
+            }}
+        """)
+        self.btn_action.clicked.connect(self.start_download)
+        controls_layout.addWidget(self.btn_action, alignment=Qt.AlignmentFlag.AlignRight)
 
-        # ── Botón Descargar ──────────────────────────────────────────────────
-        self.download_btn = QPushButton("⬇  Descargar")
-        self.download_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.download_btn.clicked.connect(self._start_download)
-        layout.addWidget(self.download_btn)
-        self._update_download_btn()
+        layout.addLayout(controls_layout)
 
-        outer.addWidget(card)
-        self.setLayout(outer)
+    def _combo_style(self):
+        return f"""
+            QComboBox {{
+                background-color: {self._colors['bg']};
+                color: {self._colors['text_main']};
+                border: 1px solid {self._colors['border']};
+                border-radius: 7px;
+                padding: 4px 8px;
+                font-size: 8.5pt;
+                font-weight: 600;
+            }}
+        """
 
-    # ── Lógica de URL / plataforma ────────────────────────────────────────────
-    def _on_url_changed(self, text: str):
-        text = text.strip()
-        if not text:
-            self._clear_logo()
-            self.platform_name_label.setText("")
-            self.detected_badge.setVisible(False)
-            self._allowed_types = ["video", "audio", "image"]
-            self._set_type("video")
-            self._update_download_btn()
+    def _on_type_changed(self, idx):
+        text = self.type_combo.currentText()
+        is_video = "🎬" in text
+        self.qual_combo.setVisible(is_video)
+
+    def _load_thumbnail(self, thumb_url):
+        if not thumb_url:
+            self.thumb_label.setText("🎬")
             return
 
-        name, icon, content_type, allow_types = detect_platform(text)
-        self._allowed_types    = allow_types
-        self._current_platform = name
-
-        # Logo
-        if icon:
-            pix = QPixmap(get_icon_path(icon))
-            if not pix.isNull():
-                self.platform_logo.setPixmap(
-                    pix.scaled(80, 80,
-                               Qt.AspectRatioMode.KeepAspectRatio,
-                               Qt.TransformationMode.SmoothTransformation))
-            else:
-                self._clear_logo()
-        else:
-            self._clear_logo()
-
-        self.platform_name_label.setText(name)
-
-        # Badge de tipo detectado
-        self._update_detected_badge(content_type)
-
-        # Forzar tipo si solo hay uno permitido
-        if len(allow_types) == 1:
-            self._set_type(allow_types[0])
-        elif self._media_type not in allow_types:
-            # El tipo actual no está permitido → seleccionar el primero disponible
-            self._set_type(allow_types[0])
-        else:
-            self._update_type_buttons()
-
-        self._update_download_btn()
-
-    def _update_detected_badge(self, content_type: str):
-        """Muestra un badge indicando qué tipo de contenido fue detectado."""
-        if content_type == "image":
-            self.detected_badge.setText("🖼  Contenido detectado: IMAGEN — solo puedes descargar imágenes")
-            self.detected_badge.setStyleSheet(
-                "color: #38ef7d; font-size: 9pt; font-weight: bold;")
-            self.detected_badge.setVisible(True)
-        elif content_type == "audio":
-            self.detected_badge.setText("🎵  Contenido detectado: AUDIO — solo puedes descargar audio")
-            self.detected_badge.setStyleSheet(
-                "color: #a78bfa; font-size: 9pt; font-weight: bold;")
-            self.detected_badge.setVisible(True)
-        elif content_type == "video":
-            self.detected_badge.setText("🎬  Contenido detectado: VIDEO — puedes descargar video o audio")
-            self.detected_badge.setStyleSheet(
-                "color: #6c63ff; font-size: 9pt; font-weight: bold;")
-            self.detected_badge.setVisible(True)
-        else:
-            # "any" — no mostrar badge restrictivo
-            self.detected_badge.setVisible(False)
-
-    def _clear_logo(self):
-        self.platform_logo.clear()
-        self.platform_logo.setText("🔗")
-        self.platform_logo.setStyleSheet(
-            f"font-size: 48pt; color: {self._colors['text_muted']};")
-
-    # ── Tipo Video / Audio / Imagen ───────────────────────────────────────────
-    def _set_type(self, t: str):
-        self._media_type = t
-        self._update_type_buttons()
-        self._populate_format_combo()
-        # La calidad solo aplica a video
-        qual_visible = (t == "video")
-        self.qual_combo.setVisible(qual_visible)
-        self.quality_lbl.setVisible(qual_visible)
-
-    def _update_type_buttons(self):
-        muted = self._colors["text_muted"]
-
-        def _style_btn(btn, btn_type, active_style=TYPE_BTN_ACTIVE):
-            allowed = btn_type in self._allowed_types
-            is_active = (self._media_type == btn_type)
-
-            if not allowed:
-                btn.setStyleSheet(TYPE_BTN_DISABLED)
-                btn.setEnabled(False)
-                btn.setCursor(Qt.CursorShape.ForbiddenCursor)
-            else:
-                btn.setEnabled(True)
-                btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                if is_active:
-                    btn.setStyleSheet(active_style)
-                else:
-                    btn.setStyleSheet(
-                        TYPE_BTN_INACTIVE_TMPL.format(muted=muted))
-
-        _style_btn(self.btn_video, "video", TYPE_BTN_ACTIVE)
-        _style_btn(self.btn_audio, "audio", TYPE_BTN_ACTIVE)
-        _style_btn(self.btn_image, "image", TYPE_BTN_ACTIVE_IMG)
-
-    def _populate_format_combo(self):
-        self.fmt_combo.clear()
-        if self._media_type == "video":
-            self.fmt_combo.addItems(FORMATS_VIDEO)
-        elif self._media_type == "audio":
-            self.fmt_combo.addItems(FORMATS_AUDIO)
-        else:
-            self.fmt_combo.addItems(FORMATS_IMAGE)
-
-    # ── Botón Descargar ───────────────────────────────────────────────────────
-    def _update_download_btn(self):
-        has_url = bool(self.url_input.text().strip())
-        if has_url:
-            self.download_btn.setEnabled(True)
-            self.download_btn.setStyleSheet(DOWNLOAD_BTN_ACTIVE)
-        else:
-            self.download_btn.setEnabled(False)
-            self.download_btn.setStyleSheet(DOWNLOAD_BTN_DISABLED)
-
-    # ── Descarga ──────────────────────────────────────────────────────────────
-    def _start_download(self):
-        url = self.url_input.text().strip()
-        if not url:
-            return
-
-        output_dir = QFileDialog.getExistingDirectory(
-            self, "Seleccionar carpeta de descarga")
-        if not output_dir:
-            return
-
-        fmt = self.fmt_combo.currentText()
-        quality_map = {
-            "Mejor disponible": "best",
-            "1080p": "1080", "720p": "720",
-            "480p": "480",   "360p": "360",
-        }
-        quality = quality_map.get(self.qual_combo.currentText(), "best")
-
-        # Advertencia si descarga de imagen desde plataforma de video
-        if self._media_type == "image" and self._allowed_types != ["image"]:
-            ans = QMessageBox.question(
-                self,
-                "Descarga de imagen",
-                "Intentarás descargar esta URL como imagen directa.\n"
-                "Esto solo funciona con URLs que apunten directamente a un archivo de imagen.\n\n"
-                "¿Continuar?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if ans != QMessageBox.StandardButton.Yes:
-                return
-
-        # Preparar UI
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
-        self.status_label.setVisible(True)
-        self.status_label.setText("Iniciando descarga...")
-        self.download_btn.setEnabled(False)
-        self.download_btn.setStyleSheet(DOWNLOAD_BTN_DISABLED)
-        self.url_input.setEnabled(False)
-        QApplication.processEvents()
-
-        from apps.link_converter.downloader import DownloadWorker
-        self._worker = DownloadWorker(
-            url=url,
-            media_type=self._media_type,
-            fmt=fmt,
-            quality=quality,
-            output_dir=output_dir,
-        )
-        self._worker.progress.connect(self._on_progress)
-        self._worker.finished.connect(
-            lambda title: self._on_finished(title, output_dir))
-        self._worker.error.connect(self._on_error)
-        self._worker.start()
-
-    def _on_progress(self, percent: int, text: str):
-        self.progress_bar.setValue(percent)
-        self.status_label.setText(text)
-
-    def _on_finished(self, title: str, output_dir: str):
-        self.progress_bar.setValue(100)
-        self.status_label.setText("✅ ¡Descarga completada!")
-        self._reset_ui()
-        QMessageBox.information(
-            self,
-            "Descarga completada",
-            f"✅ Descargado correctamente:\n\n\"{title}\"\n\nGuardado en:\n{output_dir}",
-        )
-        try:
-            os.startfile(output_dir)
-        except Exception:
+        # Descarga ligera de miniatura en hilo si es HTTP
+        def fetch():
             try:
-                subprocess.Popen(["xdg-open", output_dir])
+                req = urllib.request.Request(
+                    thumb_url,
+                    headers={"User-Agent": "Mozilla/5.0"}
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    raw = resp.read()
+                    img = QImage()
+                    if img.loadFromData(raw):
+                        pix = QPixmap.fromImage(img).scaled(
+                            110, 75,
+                            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                            Qt.TransformationMode.SmoothTransformation
+                        )
+                        QTimer.singleShot(0, lambda: self.thumb_label.setPixmap(pix))
             except Exception:
                 pass
 
-    def _on_error(self, message: str):
-        self.progress_bar.setVisible(False)
-        self.status_label.setVisible(False)
-        self._reset_ui()
-        QMessageBox.critical(
-            self,
-            "Error en la descarga",
-            f"❌ No se pudo completar la descarga:\n\n{message}",
+        import threading
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def start_download(self):
+        if self.is_finished:
+            # Si ya terminó, abre el archivo o la carpeta
+            if self.saved_path and os.path.exists(self.saved_path):
+                os.startfile(self.saved_path)
+            else:
+                os.startfile(self.output_dir)
+            return
+
+        if self.is_downloading:
+            if self.worker:
+                self.worker.cancel()
+            return
+
+        self.is_downloading = True
+        self.prog_bar.setVisible(True)
+        self.status_lbl.setVisible(True)
+        self.status_lbl.setText("Iniciando descarga...")
+        self.btn_action.setText("✕ Cancelar")
+        self.btn_action.setStyleSheet(f"""
+            QPushButton {{
+                background-color: rgba(235, 87, 87, 0.2);
+                color: #FF5A5A;
+                border: 1px solid #FF5A5A;
+                border-radius: 8px;
+                font-weight: 700;
+            }}
+        """)
+        self.type_combo.setEnabled(False)
+        self.qual_combo.setEnabled(False)
+
+        # Formato y calidad
+        type_str = self.type_combo.currentText()
+        if "🎵" in type_str:
+            media_type = "audio"
+            fmt = type_str.replace("🎵", "").strip().lower()
+        elif "🎬" in type_str:
+            media_type = "video"
+            fmt = type_str.replace("🎬", "").strip().lower()
+        else:
+            media_type = "image"
+            fmt = type_str.strip().lower()
+
+        q_str = self.qual_combo.currentText()
+        qual = "best" if q_str == "Máxima" else q_str.replace("p", "")
+
+        self.worker = DownloadWorker(
+            self.item_data["url"], media_type, fmt, qual, self.output_dir
         )
+        self.worker.progress.connect(self._on_progress)
+        self.worker.finished.connect(self._on_finished)
+        self.worker.error.connect(self._on_error)
+        self.worker.start()
 
-    def _reset_ui(self):
-        self.url_input.setEnabled(True)
-        self._update_download_btn()
+    def _on_progress(self, pct, status_text):
+        self.prog_bar.setValue(pct)
+        self.status_lbl.setText(status_text)
 
-    # ── Navegación ────────────────────────────────────────────────────────────
-    def go_back(self):
-        self.close()
+    def _on_finished(self, title, saved_path):
+        self.is_downloading = False
+        self.is_finished = True
+        self.saved_path = saved_path
+        self.prog_bar.setVisible(False)
+        self.status_lbl.setText("✅ Completado")
+        self.status_lbl.setStyleSheet("color: #4EBE82; font-weight: 700; font-size: 8.5pt;")
+
+        self.btn_action.setText("▶️ Abrir Archivo")
+        self.btn_action.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #2E7D32;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                background-color: #388E3C;
+            }}
+        """)
+        self.parent_manager._on_card_completed()
+
+    def _on_error(self, err_msg):
+        self.is_downloading = False
+        self.prog_bar.setVisible(False)
+        self.status_lbl.setText(f"❌ {err_msg}")
+        self.status_lbl.setStyleSheet("color: #FF5A5A; font-weight: 600; font-size: 8.5pt;")
+        self.btn_action.setText("🔄 Reintentar")
+        self.btn_action.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self._colors['accent']};
+                color: #FFFFFF;
+                border-radius: 8px;
+                font-weight: 700;
+            }}
+        """)
+        self.type_combo.setEnabled(True)
+        self.qual_combo.setEnabled(True)
+        self.parent_manager._on_card_completed()
+
+    def remove_card(self):
+        if self.worker and self.is_downloading:
+            self.worker.cancel()
+        self.parent_manager.remove_card(self)
+
+
+class LinkConverterWindow(QWidget):
+    """Muro de Tarjetas Dinámicas con soporte multi-enlace, playlists y descargas concurrentes."""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Link Converter — Media Hub")
+        self.resize(1020, 720)
+        self.setMinimumSize(920, 620)
+        apply_window_theme(self)
+        self._colors = get_app_colors()
+
+        self.cards = []
+        self.max_concurrent = 3
+        self.download_queue = []
+
+        # Carpeta de salida por defecto (Downloads del usuario)
+        downloads = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Downloads")
+        self.output_dir = downloads if os.path.isdir(downloads) else os.path.expanduser("~")
+
+        self.init_ui()
+
+        # Revisión automática del portapapeles al iniciar
+        QTimer.singleShot(400, self.check_clipboard_on_startup)
+
+    def init_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(28, 20, 28, 20)
+        main_layout.setSpacing(14)
+
+        # ── 1. Header con Salir ──────────────────────────────────────────────
+        header_row = QHBoxLayout()
+        title_box = QVBoxLayout()
+        title = QLabel("LINK CONVERTER")
+        title.setStyleSheet(f"font-size: 19pt; font-weight: 800; color: {self._colors['text_main']}; letter-spacing: 0.5px;")
+        desc = QLabel("Descarga videos, audios o playlists completas de YouTube, TikTok, Instagram y más.")
+        desc.setStyleSheet(f"color: {self._colors['text_muted']}; font-size: 10pt;")
+        title_box.addWidget(title)
+        title_box.addWidget(desc)
+        header_row.addLayout(title_box)
+        header_row.addStretch()
+
+        exit_btn = QPushButton("🚪 Salir")
+        exit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        exit_btn.setFixedHeight(34)
+        exit_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {self._colors['text_muted']};
+                padding: 4px 14px;
+                border-radius: 8px;
+                font-weight: 600;
+                border: 1px solid {self._colors['border']};
+            }}
+            QPushButton:hover {{
+                background-color: rgba(235, 87, 87, 0.15);
+                color: #FF5A5A;
+                border-color: rgba(235, 87, 87, 0.4);
+            }}
+        """)
+        exit_btn.clicked.connect(self.close)
+        header_row.addWidget(exit_btn)
+        main_layout.addLayout(header_row)
+
+        # ── 2. Barra de Entrada y Acciones Rápidas ───────────────────────────
+        input_card = QFrame()
+        input_card.setStyleSheet(f"background-color: {self._colors['card']}; border-radius: 14px; padding: 12px;")
+        input_layout = QVBoxLayout(input_card)
+        input_layout.setSpacing(10)
+
+        entry_row = QHBoxLayout()
+        self.url_input = QLineEdit()
+        self.url_input.setPlaceholderText("🔗 Pega aquí uno o varios enlaces (YouTube, TikTok, Instagram, Playlists...)")
+        self.url_input.setFixedHeight(44)
+        self.url_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {self._colors['bg']};
+                color: {self._colors['text_main']};
+                border: 1.5px solid {self._colors['border']};
+                border-radius: 10px;
+                padding: 0 14px;
+                font-size: 11pt;
+            }}
+            QLineEdit:focus {{
+                border-color: {self._colors['accent']};
+            }}
+        """)
+        self.url_input.returnPressed.connect(self.add_urls_from_input)
+        entry_row.addWidget(self.url_input)
+
+        self.btn_add = QPushButton("➕ Añadir Enlace")
+        self.btn_add.setFixedHeight(44)
+        self.btn_add.setFixedWidth(140)
+        self.btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_add.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self._colors['accent']};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 10px;
+                font-size: 10.5pt;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                background-color: {self._colors['accent_hover']};
+            }}
+        """)
+        self.btn_add.clicked.connect(self.add_urls_from_input)
+        entry_row.addWidget(self.btn_add)
+        input_layout.addLayout(entry_row)
+
+        # Acciones secundarias (Pegar de Portapapeles y Carpeta)
+        sub_row = QHBoxLayout()
+        self.btn_clipboard = QPushButton("📋 Pegar del Portapapeles")
+        self.btn_clipboard.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_clipboard.setStyleSheet(self._sub_btn_style())
+        self.btn_clipboard.clicked.connect(self.paste_from_clipboard)
+        sub_row.addWidget(self.btn_clipboard)
+
+        self.btn_folder = QPushButton(f"📁 Guardar en: {os.path.basename(self.output_dir)}")
+        self.btn_folder.setToolTip(self.output_dir)
+        self.btn_folder.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_folder.setStyleSheet(self._sub_btn_style())
+        self.btn_folder.clicked.connect(self.change_output_folder)
+        sub_row.addWidget(self.btn_folder)
+
+        sub_row.addStretch()
+
+        # Botón Descargar Todo
+        self.btn_download_all = QPushButton("🚀 Descargar Todo (0)")
+        self.btn_download_all.setEnabled(False)
+        self.btn_download_all.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_download_all.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #2E7D32;
+                color: white;
+                border-radius: 8px;
+                padding: 6px 16px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background-color: #388E3C; }}
+            QPushButton:disabled {{ background-color: {self._colors['border']}; color: {self._colors['text_muted']}; }}
+        """)
+        self.btn_download_all.clicked.connect(self.start_download_all)
+        sub_row.addWidget(self.btn_download_all)
+
+        # Botón Limpiar
+        self.btn_clear_done = QPushButton("🧹 Limpiar Completados")
+        self.btn_clear_done.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_clear_done.setStyleSheet(self._sub_btn_style())
+        self.btn_clear_done.clicked.connect(self.clear_completed)
+        sub_row.addWidget(self.btn_clear_done)
+
+        input_layout.addLayout(sub_row)
+        main_layout.addWidget(input_card)
+
+        # ── 3. Muro de Tarjetas Dinámicas (Scroll Area) ──────────────────────
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setStyleSheet(f"""
+            QScrollArea {{
+                border: 1px solid {self._colors['border']};
+                border-radius: 14px;
+                background-color: {self._colors['bg']};
+            }}
+        """)
+
+        self.cards_container = QWidget()
+        self.cards_layout = QVBoxLayout(self.cards_container)
+        self.cards_layout.setContentsMargins(14, 14, 14, 14)
+        self.cards_layout.setSpacing(10)
+        self.cards_layout.addStretch()
+
+        # Mensaje de Muro Vacío
+        self.empty_label = QLabel("🎯 Pega o añade un enlace arriba para comenzar a descargar.")
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_label.setStyleSheet(f"color: {self._colors['text_muted']}; font-size: 11pt; font-weight: 600; padding: 50px;")
+        self.cards_layout.insertWidget(0, self.empty_label)
+
+        self.scroll.setWidget(self.cards_container)
+        main_layout.addWidget(self.scroll)
+
+    def _sub_btn_style(self):
+        return f"""
+            QPushButton {{
+                background-color: {self._colors['bg']};
+                color: {self._colors['text_main']};
+                border: 1px solid {self._colors['border']};
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-size: 9pt;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                border-color: {self._colors['accent']};
+            }}
+        """
+
+    def check_clipboard_on_startup(self):
+        """Verifica si en el portapapeles hay una URL compatible al abrir la aplicación."""
+        cb = QApplication.clipboard()
+        text = cb.text().strip()
+        if text.startswith("http://") or text.startswith("https://"):
+            self.url_input.setText(text)
+
+    def paste_from_clipboard(self):
+        cb = QApplication.clipboard()
+        text = cb.text().strip()
+        if text:
+            self.url_input.setText(text)
+            self.add_urls_from_input()
+
+    def change_output_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Seleccionar Carpeta de Descargas", self.output_dir)
+        if folder:
+            self.output_dir = folder
+            self.btn_folder.setText(f"📁 Guardar en: {os.path.basename(folder)}")
+            self.btn_folder.setToolTip(folder)
+            for c in self.cards:
+                c.output_dir = folder
+
+    def add_urls_from_input(self):
+        raw = self.url_input.text().strip()
+        if not raw:
+            return
+
+        # Separar si pegaron múltiples links por saltos de línea o espacios
+        urls = [u.strip() for u in raw.replace(",", " ").split() if u.strip().startswith("http")]
+        if not urls:
+            QMessageBox.warning(self, "Enlace Inválido", "Por favor ingresa una URL válida (ej. https://...)")
+            return
+
+        self.url_input.clear()
+        self.empty_label.setVisible(False)
+
+        for u in urls:
+            self._fetch_and_create_card(u)
+
+    def _fetch_and_create_card(self, url: str):
+        # Crear worker de metadatos para resolver título, miniatura o playlist
+        meta_worker = MetadataWorker(url, parent=self)
+
+        def on_info_ready(items):
+            if len(items) > 1:
+                # Es una Playlist
+                reply = QMessageBox.question(
+                    self,
+                    "Playlist Detectada",
+                    f"Se detectó una lista de reproducción con {len(items)} videos.\n"
+                    f"¿Deseas agregar todos los videos a la cola de descargas?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    for it in items:
+                        self._add_card(it)
+                else:
+                    self._add_card(items[0])
+            else:
+                self._add_card(items[0])
+
+        def on_info_error(err):
+            # Fallback tarjeta con la URL directa
+            fallback_item = {
+                "url": url,
+                "title": url,
+                "uploader": "Enlace Multimedia",
+                "duration": "",
+                "thumbnail_url": "",
+                "is_playlist": False,
+                "default_type": "video",
+            }
+            self._add_card(fallback_item)
+
+        meta_worker.finished_info.connect(on_info_ready)
+        meta_worker.error.connect(on_info_error)
+        meta_worker.start()
+
+    def _add_card(self, item_data):
+        card = DownloadCard(item_data, self.output_dir, self)
+        self.cards.append(card)
+        self.cards_layout.insertWidget(len(self.cards) - 1, card)
+        self._update_all_button()
+
+    def remove_card(self, card):
+        if card in self.cards:
+            self.cards.remove(card)
+            self.cards_layout.removeWidget(card)
+            card.deleteLater()
+            self._update_all_button()
+
+        if not self.cards:
+            self.empty_label.setVisible(True)
+
+    def clear_completed(self):
+        completed = [c for c in self.cards if c.is_finished]
+        for c in completed:
+            self.remove_card(c)
+
+    def _update_all_button(self):
+        pending = [c for c in self.cards if not c.is_finished and not c.is_downloading]
+        self.btn_download_all.setText(f"🚀 Descargar Todo ({len(pending)})")
+        self.btn_download_all.setEnabled(len(pending) > 0)
+
+    def start_download_all(self):
+        """Descargas concurrentes / paralelas (máximo 3 en paralelo)."""
+        pending = [c for c in self.cards if not c.is_finished and not c.is_downloading]
+        self.download_queue = pending
+        self._pump_queue()
+
+    def _pump_queue(self):
+        active_count = sum(1 for c in self.cards if c.is_downloading)
+        while active_count < self.max_concurrent and self.download_queue:
+            next_card = self.download_queue.pop(0)
+            next_card.start_download()
+            active_count += 1
+        self._update_all_button()
+
+    def _on_card_completed(self):
+        self._update_all_button()
+        self._pump_queue()
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = LinkConverterWindow()
+    window.show()
+    sys.exit(app.exec())

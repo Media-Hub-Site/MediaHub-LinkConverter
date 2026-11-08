@@ -1,7 +1,6 @@
 """
-Worker de descarga en hilo separado.
-  - Video / Audio : usa yt-dlp
-  - Imagen        : descarga directa vía urllib
+Módulo de descarga y extracción de metadatos de enlaces y playlists.
+Soporta yt-dlp con extracción previa de metadatos y descargas concurrentes.
 """
 
 import os
@@ -9,153 +8,235 @@ import urllib.request
 import urllib.error
 from PyQt6.QtCore import QThread, pyqtSignal
 
-
 def _parse_error(e: Exception) -> str:
-    """Convierte errores de yt-dlp en mensajes legibles."""
+    """Convierte errores de yt-dlp en mensajes legibles para el usuario."""
     msg = str(e).lower()
     original = str(e)
 
-    if (("private" in msg and "login" in msg)
-            or "sign in" in msg or "authentication required" in msg):
-        return "Este contenido es privado o requiere inicio de sesión."
+    if ("private" in msg and "login" in msg) or "sign in" in msg or "authentication required" in msg:
+        return "Contenido privado o requiere inicio de sesión."
     if "unavailable" in msg or "not available" in msg:
-        return "Este video no está disponible en tu región o fue eliminado."
+        return "Video no disponible o eliminado."
     if "age" in msg and ("restrict" in msg or "confirm" in msg):
-        return "Este contenido tiene restricción de edad."
+        return "Restricción de edad en la plataforma."
     if "copyright" in msg or "has been blocked" in msg:
-        return "Este contenido está bloqueado por derechos de autor."
-    if ("unsupported url" in msg or "no video formats" in msg
-            or "unable to extract" in msg):
-        return "La URL no es válida o no es compatible con ninguna plataforma soportada."
+        return "Bloqueado por derechos de autor."
+    if "unsupported url" in msg or "no video formats" in msg or "unable to extract" in msg:
+        return "URL no compatible o no válida."
     if "connection" in msg or "network" in msg or "timed out" in msg:
-        return "No se pudo conectar. Verifica tu conexión a internet e intenta de nuevo."
+        return "Error de conexión de red."
 
-    if len(original) > 300:
-        return original[:300] + "..."
+    if len(original) > 180:
+        return original[:180] + "..."
     return original
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Worker para VIDEO / AUDIO  (yt-dlp)
-# ─────────────────────────────────────────────────────────────────────────────
-class DownloadWorker(QThread):
-    """Hilo de descarga multimedia. Emite señales de progreso, fin y error."""
+class MetadataWorker(QThread):
+    """
+    Extrae título, duración, miniatura y verifica si el enlace es una Playlist.
+    Emite finished_info(list_of_items)
+    donde cada item es dict: {url, title, uploader, duration, thumbnail_url, is_playlist}
+    """
+    finished_info = pyqtSignal(list)
+    error = pyqtSignal(str)
 
-    progress = pyqtSignal(int, str)   # (porcentaje 0-100, texto_estado)
-    finished = pyqtSignal(str)         # título del archivo descargado
-    error    = pyqtSignal(str)         # mensaje de error legible
+    def __init__(self, url: str, parent=None):
+        super().__init__(parent)
+        self.url = url
+
+    def run(self):
+        # 1. Comprobar si es imagen directa
+        clean = self.url.split("?")[0].lower()
+        if clean.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
+            filename = os.path.basename(clean) or "imagen_descargada"
+            item = {
+                "url": self.url,
+                "title": filename,
+                "uploader": "Enlace Directo",
+                "duration": "",
+                "thumbnail_url": self.url,
+                "is_playlist": False,
+                "default_type": "image",
+            }
+            self.finished_info.emit([item])
+            return
+
+        # 2. Usar yt-dlp sin descargar para extraer info rápido
+        try:
+            import yt_dlp
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "extract_flat": "in_playlist",  # Rápido para playlists sin entrar a cada video
+                "nocheckcertificate": True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(self.url, download=False)
+                if not info:
+                    self.error.emit("No se pudo obtener información del enlace.")
+                    return
+
+                # Si es Playlist
+                if "entries" in info and info["entries"]:
+                    items = []
+                    playlist_title = info.get("title", "Lista de Reproducción")
+                    for entry in info["entries"]:
+                        if not entry:
+                            continue
+                        e_url = entry.get("url") or entry.get("webpage_url")
+                        if not e_url and entry.get("id"):
+                            e_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
+                        if not e_url:
+                            continue
+
+                        # Duración formateada
+                        dur_s = entry.get("duration") or 0
+                        dur_str = f"{int(dur_s // 60)}:{int(dur_s % 60):02d}" if dur_s else ""
+
+                        items.append({
+                            "url": e_url,
+                            "title": entry.get("title", "Sin título"),
+                            "uploader": entry.get("uploader") or playlist_title,
+                            "duration": dur_str,
+                            "thumbnail_url": entry.get("thumbnail") or "",
+                            "is_playlist": True,
+                            "default_type": "video",
+                        })
+                    self.finished_info.emit(items)
+                    return
+
+                # Si es un video / audio individual
+                dur_s = info.get("duration") or 0
+                dur_str = f"{int(dur_s // 60)}:{int(dur_s % 60):02d}" if dur_s else ""
+                thumbnail = info.get("thumbnail") or ""
+
+                item = {
+                    "url": info.get("webpage_url") or self.url,
+                    "title": info.get("title", "Sin título"),
+                    "uploader": info.get("uploader", "Desconocido"),
+                    "duration": dur_str,
+                    "thumbnail_url": thumbnail,
+                    "is_playlist": False,
+                    "default_type": "video",
+                }
+                self.finished_info.emit([item])
+
+        except Exception as e:
+            self.error.emit(_parse_error(e))
+
+
+class DownloadWorker(QThread):
+    """
+    Hilo de descarga por tarjeta. Emite señales de progreso, fin y error.
+    """
+    progress = pyqtSignal(int, str)      # (porcentaje 0-100, texto_estado)
+    finished = pyqtSignal(str, str)      # (título, ruta_guardada)
+    error = pyqtSignal(str)              # mensaje de error
 
     def __init__(self, url: str, media_type: str, fmt: str,
                  quality: str, output_dir: str, parent=None):
         super().__init__(parent)
-        self.url        = url
+        self.url = url
         self.media_type = media_type   # "video" | "audio" | "image"
-        self.fmt        = fmt
-        self.quality    = quality
+        self.fmt = fmt
+        self.quality = quality
         self.output_dir = output_dir
-        self._last_percent        = -1
-        self._download_completed  = False
-        self._downloaded_title    = "archivo"
+        self._last_percent = -1
+        self._is_cancelled = False
+        self._downloaded_title = "archivo"
+        self._final_path = ""
 
-    # ── dispatch ─────────────────────────────────────────────────────────────
+    def cancel(self):
+        self._is_cancelled = True
+
     def run(self):
         if self.media_type == "image":
             self._run_image()
         else:
             self._run_ytdlp()
 
-    # ── Image download ────────────────────────────────────────────────────────
     def _run_image(self):
-        """Descarga una imagen directamente desde su URL."""
         try:
             self.progress.emit(10, "Conectando...")
-
-            # Determinar nombre de archivo
             path = self.url.split("?")[0].split("#")[0]
             raw_name = os.path.basename(path) or "imagen"
-
-            # Asegurarnos de que el nombre termina en la extensión elegida
             base, _ = os.path.splitext(raw_name)
             filename = f"{base}.{self.fmt}" if self.fmt else raw_name
-
             dest = os.path.join(self.output_dir, filename)
-
-            self.progress.emit(30, "Descargando imagen...")
+            self._final_path = dest
 
             req = urllib.request.Request(
                 self.url,
-                headers={"User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 Chrome/120 Safari/537.36"
-                )}
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120"}
             )
-
             with urllib.request.urlopen(req, timeout=30) as resp:
                 total = int(resp.headers.get("Content-Length", 0))
                 downloaded = 0
                 chunk = 8192
                 with open(dest, "wb") as f:
                     while True:
+                        if self._is_cancelled:
+                            f.close()
+                            if os.path.exists(dest): os.remove(dest)
+                            self.error.emit("Descarga cancelada.")
+                            return
                         data = resp.read(chunk)
                         if not data:
                             break
                         f.write(data)
                         downloaded += len(data)
                         if total > 0:
-                            pct = min(30 + int(downloaded / total * 65), 95)
-                            self.progress.emit(pct, f"Descargando... {pct}%")
+                            pct = min(10 + int(downloaded / total * 85), 98)
+                            self.progress.emit(pct, f"Descargando {pct}%")
 
-            self.progress.emit(100, "✅ ¡Descarga completada!")
-            self.finished.emit(filename)
+            self.progress.emit(100, "✅ ¡Completado!")
+            self.finished.emit(filename, dest)
 
-        except urllib.error.HTTPError as e:
-            self.error.emit(f"Error HTTP {e.code}: {e.reason}")
-        except urllib.error.URLError as e:
-            self.error.emit(f"No se pudo conectar: {e.reason}")
         except Exception as e:
             self.error.emit(str(e))
 
-    # ── Video / Audio download (yt-dlp) ───────────────────────────────────────
     def _run_ytdlp(self):
         try:
             import yt_dlp
         except ImportError:
-            self.error.emit("yt-dlp no está instalado. Ejecuta: pip install yt-dlp")
+            self.error.emit("yt-dlp no está instalado.")
             return
 
         output_template = os.path.join(self.output_dir, "%(title)s.%(ext)s")
 
         def progress_hook(d):
-            if d.get("status") == "downloading":
-                total      = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
-                downloaded = d.get("downloaded_bytes", 0)
-                speed      = d.get("speed", 0) or 0
-                percent    = int(downloaded / total * 100) if total > 0 else 0
+            if self._is_cancelled:
+                raise Exception("Descarga cancelada por el usuario.")
 
-                if percent != self._last_percent:
-                    self._last_percent = percent
-                    spd = f"{speed/1024/1024:.1f} MB/s" if speed > 0 else ""
-                    self.progress.emit(percent, f"Descargando... {percent}% {spd}")
+            if d.get("status") == "downloading":
+                total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
+                downloaded = d.get("downloaded_bytes", 0)
+                speed = d.get("speed", 0) or 0
+                pct = int(downloaded / total * 100) if total > 0 else 0
+
+                if pct != self._last_percent:
+                    self._last_percent = pct
+                    spd_str = f"• {speed/1024/1024:.1f} MB/s" if speed > 0 else ""
+                    self.progress.emit(pct, f"Descargando {pct}% {spd_str}")
 
             elif d.get("status") == "finished":
-                self._download_completed = True
-                self.progress.emit(99, "Procesando archivo...")
+                self.progress.emit(98, "Finalizando archivo...")
 
-        # ffmpeg bundled
         ffmpeg_location = None
         try:
             import imageio_ffmpeg
-            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-            if os.path.isfile(ffmpeg_exe):
-                ffmpeg_location = os.path.dirname(ffmpeg_exe)
+            exe = imageio_ffmpeg.get_ffmpeg_exe()
+            if os.path.isfile(exe):
+                ffmpeg_location = os.path.dirname(exe)
         except Exception:
             pass
 
         ydl_opts = {
-            "outtmpl":          output_template,
-            "progress_hooks":   [progress_hook],
-            "quiet":            True,
-            "no_warnings":      True,
+            "outtmpl": output_template,
+            "progress_hooks": [progress_hook],
+            "quiet": True,
+            "no_warnings": True,
             "nocheckcertificate": True,
         }
         if ffmpeg_location:
@@ -165,29 +246,24 @@ class DownloadWorker(QThread):
             ydl_opts.update({
                 "format": "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio/best",
                 "postprocessors": [{
-                    "key":             "FFmpegExtractAudio",
-                    "preferredcodec":  self.fmt,
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": self.fmt,
                     "preferredquality": "192",
                 }],
             })
         else:
             if self.quality == "best":
-                fmt_selector = (
-                    f"best[ext={self.fmt}]"
-                    f"/best[ext=mp4]"
-                    f"/bestvideo+bestaudio/best"
-                )
+                fmt_selector = f"best[ext={self.fmt}]/best[ext=mp4]/bestvideo+bestaudio/best"
             else:
                 h = self.quality
                 fmt_selector = (
                     f"best[height<={h}][ext={self.fmt}]"
                     f"/best[height<={h}][ext=mp4]"
                     f"/best[height<={h}]"
-                    f"/bestvideo[height<={h}]+bestaudio"
-                    f"/best"
+                    f"/bestvideo[height<={h}]+bestaudio/best"
                 )
             ydl_opts.update({
-                "format":              fmt_selector,
+                "format": fmt_selector,
                 "merge_output_format": self.fmt,
             })
 
@@ -195,15 +271,15 @@ class DownloadWorker(QThread):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(self.url, download=True)
                 title = info.get("title", "archivo") if info else "archivo"
-                self._downloaded_title   = title
-                self._download_completed = True
+                ext = info.get("ext", self.fmt) if info else self.fmt
+                self._downloaded_title = title
+                self._final_path = os.path.join(self.output_dir, f"{title}.{ext}")
 
-            self.progress.emit(100, "✅ ¡Descarga completada!")
-            self.finished.emit(self._downloaded_title)
+            self.progress.emit(100, "✅ ¡Completado!")
+            self.finished.emit(self._downloaded_title, self._final_path)
 
         except Exception as e:
-            if self._download_completed:
-                self.progress.emit(100, "✅ ¡Descarga completada!")
-                self.finished.emit(self._downloaded_title)
+            if "cancelada por el usuario" in str(e):
+                self.error.emit("Descarga cancelada.")
             else:
                 self.error.emit(_parse_error(e))
