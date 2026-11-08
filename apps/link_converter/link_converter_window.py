@@ -209,6 +209,28 @@ class DownloadCard(QFrame):
                 font-size: 8.5pt;
                 font-weight: 600;
             }}
+            QComboBox::drop-down {{
+                border: none;
+                padding-right: 6px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {self._colors['card']};
+                color: {self._colors['text_main']};
+                border: 1px solid {self._colors['border']};
+                selection-background-color: {self._colors['accent']};
+                selection-color: #FFFFFF;
+                outline: none;
+                padding: 4px;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 26px;
+                color: {self._colors['text_main']};
+                padding: 4px 8px;
+            }}
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: {self._colors['accent']};
+                color: #FFFFFF;
+            }}
         """
 
     def _on_type_changed(self, idx):

@@ -194,7 +194,10 @@ def _build_app_styles(c: dict) -> dict:
         f"QComboBox:focus{{border:1px solid {c['accent']};}}"
         f"QComboBox::drop-down{{border:none;padding-right:6px;}}"
         f"QComboBox QAbstractItemView{{background:{c['card']};border:1px solid {c['border']};"
-        f"selection-background-color:{c['accent_soft']};selection-color:{c['text_main']};}}"
+        f"color:{c['text_main']};outline:none;padding:4px;"
+        f"selection-background-color:{c['accent']};selection-color:#FFFFFF;}}"
+        f"QComboBox QAbstractItemView::item{{min-height:28px;color:{c['text_main']};padding:4px 8px;}}"
+        f"QComboBox QAbstractItemView::item:selected{{background-color:{c['accent']};color:#FFFFFF;}}"
     )
 
     drop_label = (
