@@ -1,0 +1,48 @@
+name: CI - Pull Request Verification
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Code & Import Verification
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
+          if (Test-Path requirements.txt) {
+            pip install -r requirements.txt
+          }
+
+      - name: Python Syntax & Compilation Check
+        shell: pwsh
+        run: |
+          Write-Host "Verificando compilacion de codigo Python..."
+          python -m compileall -q apps core main.py
+          Write-Host "Sintaxis y compilacion correcta."
+
+      - name: Lint Check (Critical Syntax & Name Errors)
+        shell: pwsh
+        run: |
+          flake8 apps core main.py --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Smoke Test (Import Verification)
+        shell: pwsh
+        run: |
+          python -c "import main; print('main.py se importa correctamente')"
