@@ -550,7 +550,4 @@ class LinkConverterWindow(QWidget):
 
     # ── Navegación ────────────────────────────────────────────────────────────
     def go_back(self):
-        from core.ui.hub_window import HubWindow
-        self.hub = HubWindow()
-        self.hub.show()
         self.close()
