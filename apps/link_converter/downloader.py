@@ -1,7 +1,7 @@
 """
 Módulo de descarga y extracción de metadatos de enlaces y playlists.
 Soporta yt-dlp con extracción previa de metadatos y descargas concurrentes.
-Localización y preparación automática de FFmpeg / FFprobe para post-procesado.
+Localización y preparación automática de FFmpeg para post-procesado.
 """
 
 import os
@@ -14,22 +14,35 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 def _get_ffmpeg_binary_path() -> str | None:
     """
-    Localiza o prepara un ejecutable de ffmpeg / ffprobe funcional para yt-dlp.
-    yt-dlp requiere que en la carpeta o binario existan 'ffmpeg.exe' y 'ffprobe.exe'.
+    Localiza o prepara el ejecutable de ffmpeg funcional para yt-dlp.
+    NOTA: NO creamos un 'ffprobe.exe' falso copiando ffmpeg.exe, porque yt-dlp
+    detecta la ausencia de ffprobe y usa internamente 'ffmpeg -i' de forma nativa
+    para extraer los códecs de audio sin ningún error.
+    Devuelve la ruta completa a 'ffmpeg.exe' para que yt-dlp apunte directamente
+    al binario sin buscar un ffprobe inexistente.
     """
     # 1. Comprobar si ffmpeg ya está en el PATH del sistema
     for name in ("ffmpeg.exe", "ffmpeg"):
         p = shutil.which(name)
         if p and os.path.isfile(p):
-            return os.path.dirname(p)
+            return p
 
     # 2. Carpeta global compartida de Media Hub (~/.mediahub/bin)
     user_home = os.environ.get("USERPROFILE") or os.path.expanduser("~")
     hub_bin = os.path.join(user_home, ".mediahub", "bin")
     hub_ffmpeg = os.path.join(hub_bin, "ffmpeg.exe")
     hub_ffprobe = os.path.join(hub_bin, "ffprobe.exe")
-    if os.path.isfile(hub_ffmpeg) and os.path.isfile(hub_ffprobe):
-        return hub_bin
+
+    # Limpiar cualquier ffprobe falso si existía previamente
+    if os.path.isfile(hub_ffprobe) and os.path.isfile(hub_ffmpeg):
+        try:
+            if os.path.getsize(hub_ffprobe) == os.path.getsize(hub_ffmpeg):
+                os.remove(hub_ffprobe)
+        except Exception:
+            pass
+
+    if os.path.isfile(hub_ffmpeg):
+        return hub_ffmpeg
 
     # 3. Intentar extraer/obtener desde imageio_ffmpeg
     try:
@@ -40,39 +53,32 @@ def _get_ffmpeg_binary_path() -> str | None:
             ff_exe = os.path.join(bin_dir, "ffmpeg.exe")
             fp_exe = os.path.join(bin_dir, "ffprobe.exe")
 
-            # Si se llama con sufijo (ej: ffmpeg-win-x86_64-v7.1.exe), creamos copias/enlaces
+            # Limpiar ffprobe falso si existiera
+            if os.path.isfile(fp_exe):
+                try:
+                    if os.path.getsize(fp_exe) == os.path.getsize(orig_exe):
+                        os.remove(fp_exe)
+                except Exception:
+                    pass
+
             if not os.path.isfile(ff_exe):
                 try:
                     shutil.copyfile(orig_exe, ff_exe)
                 except Exception:
                     pass
-            if not os.path.isfile(fp_exe):
-                try:
-                    shutil.copyfile(orig_exe, fp_exe)
-                except Exception:
-                    pass
 
-            if os.path.isfile(ff_exe):
-                try:
-                    os.makedirs(hub_bin, exist_ok=True)
-                    if not os.path.isfile(hub_ffmpeg):
-                        shutil.copyfile(orig_exe, hub_ffmpeg)
-                    if not os.path.isfile(hub_ffprobe):
-                        shutil.copyfile(orig_exe, hub_ffprobe)
-                except Exception:
-                    pass
-                return bin_dir
-    except Exception:
-        pass
+            target_exe = ff_exe if os.path.isfile(ff_exe) else orig_exe
 
-    # 4. Comprobar ~/.mediahub/bin aunque solo exista ffmpeg.exe
-    if os.path.isfile(hub_ffmpeg):
-        if not os.path.isfile(hub_ffprobe):
             try:
-                shutil.copyfile(hub_ffmpeg, hub_ffprobe)
+                os.makedirs(hub_bin, exist_ok=True)
+                if not os.path.isfile(hub_ffmpeg):
+                    shutil.copyfile(target_exe, hub_ffmpeg)
             except Exception:
                 pass
-        return hub_bin
+
+            return target_exe
+    except Exception:
+        pass
 
     return None
 
@@ -114,7 +120,6 @@ class MetadataWorker(QThread):
         self.url = url
 
     def run(self):
-        # 1. Comprobar si es imagen directa
         clean = self.url.split("?")[0].lower()
         if clean.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
             filename = os.path.basename(clean) or "imagen_descargada"
@@ -130,7 +135,6 @@ class MetadataWorker(QThread):
             self.finished_info.emit([item])
             return
 
-        # 2. Usar yt-dlp sin descargar para extraer info rápido
         try:
             import yt_dlp
             ydl_opts = {
@@ -139,6 +143,11 @@ class MetadataWorker(QThread):
                 "skip_download": True,
                 "extract_flat": "in_playlist",
                 "nocheckcertificate": True,
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["android", "web"]
+                    }
+                },
             }
             ff_loc = _get_ffmpeg_binary_path()
             if ff_loc:
@@ -150,7 +159,6 @@ class MetadataWorker(QThread):
                     self.error.emit("No se pudo obtener información del enlace.")
                     return
 
-                # Si es Playlist
                 if "entries" in info and info["entries"]:
                     items = []
                     playlist_title = info.get("title", "Lista de Reproducción")
@@ -183,7 +191,6 @@ class MetadataWorker(QThread):
                     self.finished_info.emit(items)
                     return
 
-                # Si es un solo video / contenido
                 dur_s = info.get("duration") or 0
                 dur_str = f"{int(dur_s // 60)}:{int(dur_s % 60):02d}" if dur_s else ""
 
@@ -205,8 +212,6 @@ class MetadataWorker(QThread):
 class DownloadWorker(QThread):
     """
     Descarga individual de un enlace hacia la carpeta configurada.
-    Acepta tanto la firma posicional clásica (url, media_type, fmt, quality, output_dir)
-    como por argumentos nombrados.
     """
     progress = pyqtSignal(int, str)
     finished = pyqtSignal(str, str)  # (title, saved_path)
@@ -216,7 +221,6 @@ class DownloadWorker(QThread):
                  quality: str = "best", output_dir: str = "", parent=None, **kwargs):
         super().__init__(parent)
         self.url = url
-        # Si kwargs pasa output_dir o argumentos desordenados
         if not output_dir and "output_dir" in kwargs:
             output_dir = kwargs["output_dir"]
         self.output_dir = output_dir or os.path.expanduser("~")
@@ -312,6 +316,11 @@ class DownloadWorker(QThread):
             "quiet": True,
             "no_warnings": True,
             "nocheckcertificate": True,
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "web"]
+                }
+            },
         }
         if ffmpeg_location:
             ydl_opts["ffmpeg_location"] = ffmpeg_location
@@ -345,7 +354,7 @@ class DownloadWorker(QThread):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(self.url, download=True)
                 title = info.get("title", "archivo") if info else "archivo"
-                ext = info.get("ext", self.fmt) if info else self.fmt
+                ext = self.fmt if self.media_type == "audio" else (info.get("ext", self.fmt) if info else self.fmt)
                 self._downloaded_title = title
                 self._final_path = os.path.join(self.output_dir, f"{title}.{ext}")
 
