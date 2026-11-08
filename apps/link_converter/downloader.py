@@ -218,7 +218,8 @@ class DownloadWorker(QThread):
     error = pyqtSignal(str)
 
     def __init__(self, url: str, media_type: str = "video", fmt: str = "mp4",
-                 quality: str = "best", output_dir: str = "", parent=None, **kwargs):
+                 quality: str = "best", output_dir: str = "", parent=None,
+                 start_time: str = "", end_time: str = "", **kwargs):
         super().__init__(parent)
         self.url = url
         if not output_dir and "output_dir" in kwargs:
@@ -227,6 +228,8 @@ class DownloadWorker(QThread):
         self.media_type = (media_type or "video").lower()  # "video", "audio", "image"
         self.quality = (quality or "best").lower()        # "best", "1080", "720", etc.
         self.fmt = (fmt or "mp4").lower()                # "mp4", "mp3", "wav", etc.
+        self.start_time = (start_time or "").strip()
+        self.end_time = (end_time or "").strip()
         self._is_cancelled = False
         self._last_percent = -1
         self._downloaded_title = ""
@@ -324,6 +327,16 @@ class DownloadWorker(QThread):
         }
         if ffmpeg_location:
             ydl_opts["ffmpeg_location"] = ffmpeg_location
+
+        # Recorte de tiempo con FFmpeg si se especificó start_time o end_time
+        if (self.start_time or self.end_time) and ffmpeg_location:
+            pp_args = []
+            if self.start_time:
+                pp_args.extend(["-ss", self.start_time])
+            if self.end_time:
+                pp_args.extend(["-to", self.end_time])
+            if pp_args:
+                ydl_opts["postprocessor_args"] = pp_args
 
         if self.media_type == "audio":
             ydl_opts.update({

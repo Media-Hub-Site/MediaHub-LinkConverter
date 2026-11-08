@@ -123,6 +123,7 @@ class DownloadCard(QFrame):
         self.btn_del = QPushButton("✕")
         self.btn_del.setFixedSize(28, 28)
         self.btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_del.setToolTip("Quitar de la lista")
         self.btn_del.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
@@ -142,10 +143,36 @@ class DownloadCard(QFrame):
 
         controls_layout.addLayout(top_controls)
 
+        # Fila de acciones secundarias: Bajar Miniatura HD + Descargar
+        action_row = QHBoxLayout()
+        action_row.setSpacing(6)
+
+        self.btn_thumb = QPushButton("🖼️ Miniatura")
+        self.btn_thumb.setFixedHeight(34)
+        self.btn_thumb.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_thumb.setToolTip("Guardar carátula/miniatura HD original")
+        self.btn_thumb.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self._colors['bg']};
+                color: {self._colors['text_main']};
+                border: 1px solid {self._colors['border']};
+                border-radius: 8px;
+                font-weight: 600;
+                font-size: 8.5pt;
+                padding: 0 8px;
+            }}
+            QPushButton:hover {{
+                border-color: {self._colors['accent']};
+                color: {self._colors['accent']};
+            }}
+        """)
+        self.btn_thumb.clicked.connect(self.save_thumbnail_hd)
+        action_row.addWidget(self.btn_thumb)
+
         # Botón Acción de Descarga / Abrir
         self.btn_action = QPushButton("⬇️ Descargar")
         self.btn_action.setFixedHeight(34)
-        self.btn_action.setFixedWidth(140)
+        self.btn_action.setFixedWidth(130)
         self.btn_action.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_action.setStyleSheet(f"""
             QPushButton {{
@@ -165,7 +192,9 @@ class DownloadCard(QFrame):
             }}
         """)
         self.btn_action.clicked.connect(self.start_download)
-        controls_layout.addWidget(self.btn_action, alignment=Qt.AlignmentFlag.AlignRight)
+        action_row.addWidget(self.btn_action)
+
+        controls_layout.addLayout(action_row)
 
         layout.addLayout(controls_layout)
 
@@ -214,6 +243,29 @@ class DownloadCard(QFrame):
 
         import threading
         threading.Thread(target=fetch, daemon=True).start()
+
+    def save_thumbnail_hd(self):
+        thumb_url = self.item_data.get("thumbnail_url")
+        if not thumb_url:
+            QMessageBox.warning(self, "Sin Miniatura", "Este enlace no posee miniatura disponible.")
+            return
+
+        title_clean = "".join(c for c in self.item_data.get("title", "miniatura") if c.isalnum() or c in (" ", "_", "-")).rstrip()
+        default_name = f"{title_clean or 'miniatura'}.jpg"
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "Guardar Miniatura HD", os.path.join(self.output_dir, default_name), "Imágenes (*.jpg *.png *.webp)"
+        )
+        if not save_path:
+            return
+
+        try:
+            req = urllib.request.Request(thumb_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                with open(save_path, "wb") as f:
+                    f.write(resp.read())
+            QMessageBox.information(self, "Miniatura Guardada", f"Se guardó la miniatura con éxito en:\n{save_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error al Guardar", f"No se pudo descargar la miniatura:\n{e}")
 
     def start_download(self):
         if self.is_finished:
