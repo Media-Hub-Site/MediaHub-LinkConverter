@@ -53,7 +53,6 @@ def _get_ffmpeg_binary_path() -> str | None:
                     pass
 
             if os.path.isfile(ff_exe):
-                # También aseguramos tenerlo en ~/.mediahub/bin para futuras ejecuciones
                 try:
                     os.makedirs(hub_bin, exist_ok=True)
                     if not os.path.isfile(hub_ffmpeg):
@@ -138,7 +137,7 @@ class MetadataWorker(QThread):
                 "quiet": True,
                 "no_warnings": True,
                 "skip_download": True,
-                "extract_flat": "in_playlist",  # Rápido para playlists sin entrar a cada video
+                "extract_flat": "in_playlist",
                 "nocheckcertificate": True,
             }
             ff_loc = _get_ffmpeg_binary_path()
@@ -164,7 +163,6 @@ class MetadataWorker(QThread):
                         if not e_url:
                             continue
 
-                        # Duración formateada
                         dur_s = entry.get("duration") or 0
                         dur_str = f"{int(dur_s // 60)}:{int(dur_s % 60):02d}" if dur_s else ""
 
@@ -207,19 +205,24 @@ class MetadataWorker(QThread):
 class DownloadWorker(QThread):
     """
     Descarga individual de un enlace hacia la carpeta configurada.
+    Acepta tanto la firma posicional clásica (url, media_type, fmt, quality, output_dir)
+    como por argumentos nombrados.
     """
     progress = pyqtSignal(int, str)
     finished = pyqtSignal(str, str)  # (title, saved_path)
     error = pyqtSignal(str)
 
-    def __init__(self, url: str, output_dir: str, media_type: str = "video",
-                 quality: str = "best", fmt: str = "mp4", parent=None):
+    def __init__(self, url: str, media_type: str = "video", fmt: str = "mp4",
+                 quality: str = "best", output_dir: str = "", parent=None, **kwargs):
         super().__init__(parent)
         self.url = url
-        self.output_dir = output_dir
-        self.media_type = media_type.lower()  # "video", "audio", "image"
-        self.quality = quality.lower()        # "best", "1080", "720", "480", "360"
-        self.fmt = fmt.lower()                # "mp4", "mkv", "mp3", "wav", "m4a", etc.
+        # Si kwargs pasa output_dir o argumentos desordenados
+        if not output_dir and "output_dir" in kwargs:
+            output_dir = kwargs["output_dir"]
+        self.output_dir = output_dir or os.path.expanduser("~")
+        self.media_type = (media_type or "video").lower()  # "video", "audio", "image"
+        self.quality = (quality or "best").lower()        # "best", "1080", "720", etc.
+        self.fmt = (fmt or "mp4").lower()                # "mp4", "mp3", "wav", etc.
         self._is_cancelled = False
         self._last_percent = -1
         self._downloaded_title = ""
