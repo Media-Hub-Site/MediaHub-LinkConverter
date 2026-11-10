@@ -14,6 +14,7 @@ from apps.link_converter.ui_theme import get_app_colors, apply_window_theme
 from apps.link_converter.platform_detector import detect_platform
 from apps.link_converter.downloader import MetadataWorker, DownloadWorker
 from apps.link_converter.i18n import t, get_current_language
+from core.sound_manager import SoundManager
 
 
 class DownloadCard(QFrame):
@@ -350,6 +351,7 @@ class DownloadCard(QFrame):
         self.status_lbl.setText(status_text)
 
     def _on_finished(self, title, saved_path):
+        SoundManager.instance().play("success")
         self.is_downloading = False
         self.is_finished = True
         self.saved_path = saved_path
@@ -406,6 +408,10 @@ class LinkConverterWindow(QWidget):
         self.setMinimumSize(920, 620)
         apply_window_theme(self)
         self._colors = get_app_colors()
+
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "assets", "hub", "Media-Hub.ico")
+        if os.path.isfile(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
 
         self.cards = []
         self.max_concurrent = 3
