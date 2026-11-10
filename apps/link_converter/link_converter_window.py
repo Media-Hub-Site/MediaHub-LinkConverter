@@ -65,7 +65,7 @@ class DownloadCard(QFrame):
 
         uploader = self.item_data.get("uploader", "")
         duration = self.item_data.get("duration", "")
-        meta_text = f"👤 {uploader}   •   ⏱️ {duration}" if duration else f"👤 {uploader}"
+        meta_text = f"{uploader}   •   {duration}" if duration else uploader
         self.meta_label = QLabel(meta_text)
         self.meta_label.setStyleSheet(f"color: {self._colors['text_muted']}; font-size: 8.5pt;")
         info_layout.addWidget(self.meta_label)
@@ -109,7 +109,7 @@ class DownloadCard(QFrame):
         if self.item_data.get("default_type") == "image":
             self.type_combo.addItems(["JPG", "PNG", "WEBP"])
         else:
-            self.type_combo.addItems(["🎬 MP4", "🎬 MKV", "🎵 MP3", "🎵 M4A", "🎵 WAV"])
+            self.type_combo.addItems(["MP4", "MKV", "MP3", "M4A", "WAV"])
         self.type_combo.currentIndexChanged.connect(self._on_type_changed)
         top_controls.addWidget(self.type_combo)
 
@@ -147,7 +147,7 @@ class DownloadCard(QFrame):
         action_row = QHBoxLayout()
         action_row.setSpacing(6)
 
-        self.btn_thumb = QPushButton("🖼️ Miniatura")
+        self.btn_thumb = QPushButton("Miniatura")
         self.btn_thumb.setFixedHeight(34)
         self.btn_thumb.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_thumb.setToolTip("Guardar carátula/miniatura HD original")
@@ -235,12 +235,12 @@ class DownloadCard(QFrame):
 
     def _on_type_changed(self, idx):
         text = self.type_combo.currentText()
-        is_video = "🎬" in text
+        is_video = text.upper() in ["MP4", "MKV"]
         self.qual_combo.setVisible(is_video)
 
     def _load_thumbnail(self, thumb_url):
         if not thumb_url:
-            self.thumb_label.setText("🎬")
+            self.thumb_label.setText("")
             return
 
         # Descarga ligera de miniatura en hilo si es HTTP
@@ -307,7 +307,7 @@ class DownloadCard(QFrame):
         self.prog_bar.setVisible(True)
         self.status_lbl.setVisible(True)
         self.status_lbl.setText("Iniciando descarga...")
-        self.btn_action.setText("✕ Cancelar")
+        self.btn_action.setText("Cancelar")
         self.btn_action.setStyleSheet(f"""
             QPushButton {{
                 background-color: rgba(235, 87, 87, 0.2);
@@ -322,12 +322,13 @@ class DownloadCard(QFrame):
 
         # Formato y calidad
         type_str = self.type_combo.currentText()
-        if "🎵" in type_str:
+        clean_type = type_str.strip().upper()
+        if clean_type in ["MP3", "M4A", "WAV"]:
             media_type = "audio"
-            fmt = type_str.replace("🎵", "").strip().lower()
-        elif "🎬" in type_str:
+            fmt = clean_type.lower()
+        elif clean_type in ["MP4", "MKV"]:
             media_type = "video"
-            fmt = type_str.replace("🎬", "").strip().lower()
+            fmt = clean_type.lower()
         else:
             media_type = "image"
             fmt = type_str.strip().lower()
@@ -352,7 +353,7 @@ class DownloadCard(QFrame):
         self.is_finished = True
         self.saved_path = saved_path
         self.prog_bar.setVisible(False)
-        self.status_lbl.setText("✅ Completado")
+        self.status_lbl.setText("Completado")
         self.status_lbl.setStyleSheet("color: #4EBE82; font-weight: 700; font-size: 8.5pt;")
 
         self.btn_action.setText("▶️ Abrir Archivo")
@@ -373,9 +374,9 @@ class DownloadCard(QFrame):
     def _on_error(self, err_msg):
         self.is_downloading = False
         self.prog_bar.setVisible(False)
-        self.status_lbl.setText(f"❌ {err_msg}")
+        self.status_lbl.setText(f"Error: {err_msg}")
         self.status_lbl.setStyleSheet("color: #FF5A5A; font-weight: 600; font-size: 8.5pt;")
-        self.btn_action.setText("🔄 Reintentar")
+        self.btn_action.setText("Reintentar")
         self.btn_action.setStyleSheet(f"""
             QPushButton {{
                 background-color: {self._colors['accent']};
@@ -435,7 +436,7 @@ class LinkConverterWindow(QWidget):
         header_row.addLayout(title_box)
         header_row.addStretch()
 
-        exit_btn = QPushButton("🚪 Salir")
+        exit_btn = QPushButton("Salir")
         exit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         exit_btn.setFixedHeight(34)
         exit_btn.setStyleSheet(f"""
@@ -465,7 +466,7 @@ class LinkConverterWindow(QWidget):
 
         entry_row = QHBoxLayout()
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("🔗 Pega aquí uno o varios enlaces (YouTube, TikTok, Instagram, Playlists...)")
+        self.url_input.setPlaceholderText("Pega aquí uno o varios enlaces (YouTube, TikTok, Instagram, Playlists...)")
         self.url_input.setFixedHeight(44)
         self.url_input.setStyleSheet(f"""
             QLineEdit {{
@@ -483,7 +484,7 @@ class LinkConverterWindow(QWidget):
         self.url_input.returnPressed.connect(self.add_urls_from_input)
         entry_row.addWidget(self.url_input)
 
-        self.btn_add = QPushButton("➕ Añadir Enlace")
+        self.btn_add = QPushButton("Añadir Enlace")
         self.btn_add.setFixedHeight(44)
         self.btn_add.setFixedWidth(140)
         self.btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -506,13 +507,13 @@ class LinkConverterWindow(QWidget):
 
         # Acciones secundarias (Pegar de Portapapeles y Carpeta)
         sub_row = QHBoxLayout()
-        self.btn_clipboard = QPushButton("📋 Pegar del Portapapeles")
+        self.btn_clipboard = QPushButton("Pegar del Portapapeles")
         self.btn_clipboard.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_clipboard.setStyleSheet(self._sub_btn_style())
         self.btn_clipboard.clicked.connect(self.paste_from_clipboard)
         sub_row.addWidget(self.btn_clipboard)
 
-        self.btn_folder = QPushButton(f"📁 Guardar en: {os.path.basename(self.output_dir)}")
+        self.btn_folder = QPushButton(f"Guardar en: {os.path.basename(self.output_dir)}")
         self.btn_folder.setToolTip(self.output_dir)
         self.btn_folder.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_folder.setStyleSheet(self._sub_btn_style())
@@ -522,7 +523,7 @@ class LinkConverterWindow(QWidget):
         sub_row.addStretch()
 
         # Botón Descargar Todo
-        self.btn_download_all = QPushButton("🚀 Descargar Todo (0)")
+        self.btn_download_all = QPushButton("Descargar Todo (0)")
         self.btn_download_all.setEnabled(False)
         self.btn_download_all.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_download_all.setStyleSheet(f"""
@@ -540,7 +541,7 @@ class LinkConverterWindow(QWidget):
         sub_row.addWidget(self.btn_download_all)
 
         # Botón Limpiar
-        self.btn_clear_done = QPushButton("🧹 Limpiar Completados")
+        self.btn_clear_done = QPushButton("Limpiar Completados")
         self.btn_clear_done.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_clear_done.setStyleSheet(self._sub_btn_style())
         self.btn_clear_done.clicked.connect(self.clear_completed)
@@ -567,7 +568,7 @@ class LinkConverterWindow(QWidget):
         self.cards_layout.addStretch()
 
         # Mensaje de Muro Vacío
-        self.empty_label = QLabel("🎯 Pega o añade un enlace arriba para comenzar a descargar.")
+        self.empty_label = QLabel("Pega o añade un enlace arriba para comenzar a descargar.")
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_label.setStyleSheet(f"color: {self._colors['text_muted']}; font-size: 11pt; font-weight: 600; padding: 50px;")
         self.cards_layout.insertWidget(0, self.empty_label)
@@ -609,7 +610,7 @@ class LinkConverterWindow(QWidget):
         folder = QFileDialog.getExistingDirectory(self, "Seleccionar Carpeta de Descargas", self.output_dir)
         if folder:
             self.output_dir = folder
-            self.btn_folder.setText(f"📁 Guardar en: {os.path.basename(folder)}")
+            self.btn_folder.setText(f"Guardar en: {os.path.basename(folder)}")
             self.btn_folder.setToolTip(folder)
             for c in self.cards:
                 c.output_dir = folder
@@ -694,7 +695,7 @@ class LinkConverterWindow(QWidget):
 
     def _update_all_button(self):
         pending = [c for c in self.cards if not c.is_finished and not c.is_downloading]
-        self.btn_download_all.setText(f"🚀 Descargar Todo ({len(pending)})")
+        self.btn_download_all.setText(f"Descargar Todo ({len(pending)})")
         self.btn_download_all.setEnabled(len(pending) > 0)
 
     def start_download_all(self):

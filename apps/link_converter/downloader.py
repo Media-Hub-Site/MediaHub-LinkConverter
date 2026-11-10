@@ -278,7 +278,7 @@ class DownloadWorker(QThread):
                             pct = min(10 + int(downloaded / total * 85), 98)
                             self.progress.emit(pct, f"Descargando {pct}%")
 
-            self.progress.emit(100, "✅ ¡Completado!")
+            self.progress.emit(100, "¡Completado!")
             self.finished.emit(filename, dest)
 
         except Exception as e:
@@ -371,7 +371,7 @@ class DownloadWorker(QThread):
                 self._downloaded_title = title
                 self._final_path = os.path.join(self.output_dir, f"{title}.{ext}")
 
-            self.progress.emit(100, "✅ ¡Completado!")
+            self.progress.emit(100, "¡Completado!")
             self.finished.emit(self._downloaded_title, self._final_path)
 
         except Exception as e:
