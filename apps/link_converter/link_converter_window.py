@@ -13,6 +13,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QImage
 from apps.link_converter.ui_theme import get_app_colors, apply_window_theme
 from apps.link_converter.platform_detector import detect_platform
 from apps.link_converter.downloader import MetadataWorker, DownloadWorker
+from apps.link_converter.i18n import t, get_current_language
 
 
 class DownloadCard(QFrame):
