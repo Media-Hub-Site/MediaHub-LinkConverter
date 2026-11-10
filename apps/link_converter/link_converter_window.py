@@ -400,7 +400,7 @@ class LinkConverterWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Link Converter — Media Hub")
+        self.setWindowTitle(t("app_title"))
         self.resize(1020, 720)
         self.setMinimumSize(920, 620)
         apply_window_theme(self)
@@ -436,7 +436,7 @@ class LinkConverterWindow(QWidget):
         header_row.addLayout(title_box)
         header_row.addStretch()
 
-        exit_btn = QPushButton("Salir")
+        exit_btn = QPushButton(t("btn_exit"))
         exit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         exit_btn.setFixedHeight(34)
         exit_btn.setStyleSheet(f"""
@@ -466,7 +466,7 @@ class LinkConverterWindow(QWidget):
 
         entry_row = QHBoxLayout()
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("Pega aquí uno o varios enlaces (YouTube, TikTok, Instagram, Playlists...)")
+        self.url_input.setPlaceholderText(t("input_placeholder"))
         self.url_input.setFixedHeight(44)
         self.url_input.setStyleSheet(f"""
             QLineEdit {{
@@ -484,7 +484,7 @@ class LinkConverterWindow(QWidget):
         self.url_input.returnPressed.connect(self.add_urls_from_input)
         entry_row.addWidget(self.url_input)
 
-        self.btn_add = QPushButton("Añadir Enlace")
+        self.btn_add = QPushButton(t("btn_add_link"))
         self.btn_add.setFixedHeight(44)
         self.btn_add.setFixedWidth(140)
         self.btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -507,7 +507,7 @@ class LinkConverterWindow(QWidget):
 
         # Acciones secundarias (Pegar de Portapapeles y Carpeta)
         sub_row = QHBoxLayout()
-        self.btn_clipboard = QPushButton("Pegar del Portapapeles")
+        self.btn_clipboard = QPushButton(t("btn_clipboard"))
         self.btn_clipboard.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_clipboard.setStyleSheet(self._sub_btn_style())
         self.btn_clipboard.clicked.connect(self.paste_from_clipboard)
@@ -541,7 +541,7 @@ class LinkConverterWindow(QWidget):
         sub_row.addWidget(self.btn_download_all)
 
         # Botón Limpiar
-        self.btn_clear_done = QPushButton("Limpiar Completados")
+        self.btn_clear_done = QPushButton(t("btn_clear_done"))
         self.btn_clear_done.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_clear_done.setStyleSheet(self._sub_btn_style())
         self.btn_clear_done.clicked.connect(self.clear_completed)
@@ -568,7 +568,7 @@ class LinkConverterWindow(QWidget):
         self.cards_layout.addStretch()
 
         # Mensaje de Muro Vacío
-        self.empty_label = QLabel("Pega o añade un enlace arriba para comenzar a descargar.")
+        self.empty_label = QLabel(t("empty_prompt"))
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_label.setStyleSheet(f"color: {self._colors['text_muted']}; font-size: 11pt; font-weight: 600; padding: 50px;")
         self.cards_layout.insertWidget(0, self.empty_label)
